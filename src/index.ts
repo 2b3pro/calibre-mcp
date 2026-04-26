@@ -12,20 +12,7 @@ import { fetchContent } from "./tools/read";
 import { updateMetadata } from "./tools/write";
 import { fetchOnlineMetadata, polishBook, readFileMetadata, writeFileMetadata, getTableOfContents, suggestTags, fixMetadata } from "./tools/maintenance";
 import { convertEbook } from "./tools/convert";
-import { deepSearchBook, semanticRerank, summarizeResults } from "./tools/deep_search";
-...
-      {
-        name: "summarize_results",
-        description: "Synthesize a cohesive answer to a question based on multiple search snippets from the library.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            query: { type: "string", description: "The question to answer" },
-            results: { type: "array", items: { type: "object" }, description: "List of results from search_library" }
-          },
-          required: ["query", "results"]
-        }
-      }
+import { deepSearchBook, semanticRerank } from "./tools/deep_search";
 import { join } from "path";
 import { homedir } from "os";
 
@@ -418,18 +405,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const reranked = await semanticRerank(query, results);
         return {
           content: [{ type: "text", text: JSON.stringify(reranked, null, 2) }]
-        };
-      }
-
-      case "summarize_results": {
-        const { query, results } = z.object({
-          query: z.string(),
-          results: z.array(z.any())
-        }).parse(args);
-        
-        const summary = await summarizeResults(query, results);
-        return {
-          content: [{ type: "text", text: JSON.stringify(summary, null, 2) }]
         };
       }
 
