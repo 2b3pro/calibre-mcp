@@ -14,7 +14,13 @@ export async function updateMetadata(
   }
 
   // Execute update via CLI
-  await cli.setMetadata(bookId, fields);
+  const updateFields: Record<string, string> = { ...fields };
+  if (updateFields.isbn) {
+    updateFields.identifiers = `isbn:${updateFields.isbn}`;
+    delete updateFields.isbn;
+  }
+
+  await cli.setMetadata(bookId, updateFields);
 
   // Return the new metadata
   return await db.getBookById(bookId);

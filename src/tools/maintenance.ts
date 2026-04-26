@@ -61,6 +61,173 @@ export async function writeFileMetadata(db: CalibreDatabase, cli: CalibreCLI, bo
   return { success: true, format: selectedFormat, updated_fields: Object.keys(fields) };
 }
 
+export async function fixMetadata(
+  db: CalibreDatabase,
+  cli: CalibreCLI,
+  bookId: number
+) {
+  const metadata = await db.getBookById(bookId);
+  if (!metadata) throw new Error("Book not found");
+
+  const libraryPath = db.getLibraryPath();
+  const bookDir = join(libraryPath, metadata.path);
+  
+  const format = metadata.formats.find(f => ["epub", "pdf", "azw3", "mobi"].includes(f.toLowerCase())) || metadata.formats[0];
+  if (!format) throw new Error("No readable format available");
+
+  const files = await Array.fromAsync(new Bun.Glob(`*.${format.toLowerCase()}`).scan(bookDir));
+  if (files.length === 0 || !files[0]) throw new Error("File not found");
+
+  const inputPath = join(bookDir, files[0]);
+  const fullText = await cli.convertToText(inputPath);
+  
+  // Title page and copyright page are usually in the first 4000 chars
+  const sample = fullText.substring(0, 4000); 
+
+  const hasGbox = await Bun.which("gbox");
+  if (!hasGbox) throw new Error("gbox utility not found in PATH");
+
+  const schema = {
+    type: "object",
+    properties: {
+      title: { type: "string" },
+      authors: { type: "string", description: "Comma separated list of authors" },
+      isbn: { type: "string", description: "Standard ISBN-10 or ISBN-13" },
+      publisher: { type: "string" },
+      pubdate: { type: "string", description: "ISO format YYYY-MM-DD" }
+    },
+    required: ["title", "authors"]
+  };
+
+  const schemaPath = join("/tmp", `meta-schema-${Date.now()}.json`);
+  await Bun.write(schemaPath, JSON.stringify(schema));
+
+  try {
+    const gboxProc = spawn(["gbox", "--high", "--json", "--schema", schemaPath, "--prompt", 
+      `Extract the correct book metadata from the following text sample. 
+      Often the text contains noise from OCR or file naming - ignore it and find the real title and author.
+      
+      Text sample:
+      ${sample}`
+    ], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, CALIBRE_CONFIG_DIRECTORY: join(homedir(), ".calibre-mcp-empty") }
+    });
+
+    const [output, stderr] = await Promise.all([
+      new Response(gboxProc.stdout).text(),
+      new Response(gboxProc.stderr).text()
+    ]);
+    
+    await gboxProc.exited;
+    await unlink(schemaPath).catch(() => {});
+
+    if (!output.trim()) throw new Error(`Gbox failed: ${stderr}`);
+
+    const result = JSON.parse(output.trim());
+    
+    // Auto-update the database
+    const fields: Record<string, string> = {
+      title: result.title,
+      authors: result.authors
+    };
+    // In calibredb set_metadata, identifiers are set as a string like "isbn:123,google:456"
+    if (result.isbn) fields.identifiers = `isbn:${result.isbn}`;
+    if (result.publisher) fields.publisher = result.publisher;
+    if (result.pubdate) fields.pubdate = result.pubdate;
+
+    await cli.setMetadata(bookId, fields);
+
+    return {
+      book_id: bookId,
+      status: "updated",
+      previous: { title: metadata.title, authors: metadata.authors },
+      recovered: result
+    };
+  } catch (e) {
+    await unlink(schemaPath).catch(() => {});
+    throw e;
+  }
+}
+
+export async function suggestTags(
+  db: CalibreDatabase,
+  cli: CalibreCLI,
+  bookId: number
+) {
+  const metadata = await db.getBookById(bookId);
+  if (!metadata) throw new Error("Book not found");
+
+  const libraryPath = db.getLibraryPath();
+  const bookDir = join(libraryPath, metadata.path);
+  
+  // Find a format to read text from
+  const format = metadata.formats.find(f => ["epub", "pdf", "azw3", "mobi"].includes(f.toLowerCase())) || metadata.formats[0];
+  if (!format) throw new Error("No readable format available");
+
+  const files = await Array.fromAsync(new Bun.Glob(`*.${format.toLowerCase()}`).scan(bookDir));
+  if (files.length === 0 || !files[0]) throw new Error("File not found");
+
+  const inputPath = join(bookDir, files[0]);
+  const fullText = await cli.convertToText(inputPath);
+  
+  // Take a sample from the beginning (skipping very first front matter if possible, but 5000 chars usually hits the intro)
+  const sample = fullText.substring(500, 6500); 
+
+  const hasGbox = await Bun.which("gbox");
+  if (!hasGbox) throw new Error("gbox utility not found in PATH");
+
+  const schema = {
+    type: "object",
+    properties: {
+      tags: {
+        type: "array",
+        items: { type: "string" },
+        description: "5-8 descriptive category tags (e.g. 'Psychology', 'History', 'Fiction')"
+      }
+    },
+    required: ["tags"]
+  };
+
+  const schemaPath = join("/tmp", `tag-schema-${Date.now()}.json`);
+  await Bun.write(schemaPath, JSON.stringify(schema));
+
+  try {
+    const gboxProc = spawn(["gbox", "--high", "--json", "--schema", schemaPath, "--prompt", 
+      `Analyze the following book sample and suggest 5-8 descriptive category tags for a library.
+      The book title is: ${metadata.title} by ${metadata.authors}.
+      
+      Text sample:
+      ${sample}`
+    ], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, CALIBRE_CONFIG_DIRECTORY: join(homedir(), ".calibre-mcp-empty") }
+    });
+
+    const [output, stderr] = await Promise.all([
+      new Response(gboxProc.stdout).text(),
+      new Response(gboxProc.stderr).text()
+    ]);
+    
+    await gboxProc.exited;
+    await unlink(schemaPath).catch(() => {});
+
+    if (!output.trim()) throw new Error(`Gbox failed: ${stderr}`);
+
+    const result = JSON.parse(output.trim());
+    return {
+      book: { id: metadata.id, title: metadata.title, authors: metadata.authors },
+      current_tags: metadata.tags,
+      suggested_tags: result.tags
+    };
+  } catch (e) {
+    await unlink(schemaPath).catch(() => {});
+    throw e;
+  }
+}
+
 export async function getTableOfContents(
   db: CalibreDatabase,
   cli: CalibreCLI,

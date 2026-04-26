@@ -10,9 +10,22 @@ import { CalibreCLI } from "./calibre/CalibreCLI";
 import { searchLibrary } from "./tools/search";
 import { fetchContent } from "./tools/read";
 import { updateMetadata } from "./tools/write";
-import { fetchOnlineMetadata, polishBook, readFileMetadata, writeFileMetadata, getTableOfContents } from "./tools/maintenance";
+import { fetchOnlineMetadata, polishBook, readFileMetadata, writeFileMetadata, getTableOfContents, suggestTags, fixMetadata } from "./tools/maintenance";
 import { convertEbook } from "./tools/convert";
-import { deepSearchBook } from "./tools/deep_search";
+import { deepSearchBook, semanticRerank, summarizeResults } from "./tools/deep_search";
+...
+      {
+        name: "summarize_results",
+        description: "Synthesize a cohesive answer to a question based on multiple search snippets from the library.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "The question to answer" },
+            results: { type: "array", items: { type: "object" }, description: "List of results from search_library" }
+          },
+          required: ["query", "results"]
+        }
+      }
 import { join } from "path";
 import { homedir } from "os";
 
@@ -185,6 +198,28 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: "suggest_tags",
+        description: "Use AI to analyze a book's content and suggest 5-8 relevant category tags.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            book_id: { type: "integer", description: "The Calibre book ID" }
+          },
+          required: ["book_id"]
+        }
+      },
+      {
+        name: "fix_metadata",
+        description: "Use AI to identify the real Title, Author, and ISBN from the book's content and automatically update the Calibre library.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            book_id: { type: "integer", description: "The Calibre book ID" }
+          },
+          required: ["book_id"]
+        }
+      },
+      {
         name: "deep_search_book",
         description: "Search for a query directly inside a specific book by converting it to text on-the-fly. Useful for books not yet indexed by Calibre FTS.",
         inputSchema: {
@@ -195,6 +230,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             context_lines: { type: "integer", description: "Number of context lines to return around each match", default: 2 }
           },
           required: ["book_id", "query"]
+        }
+      },
+      {
+        name: "semantic_rerank",
+        description: "Conceptually rank search results by their relevance to a user's question using AI.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "The conceptual question or topic" },
+            results: { type: "array", items: { type: "object" }, description: "List of results from search_library" }
+          },
+          required: ["query", "results"]
         }
       }
     ]
@@ -327,6 +374,28 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      case "suggest_tags": {
+        const { book_id } = z.object({
+          book_id: z.number()
+        }).parse(args);
+        
+        const result = await suggestTags(db, cli, book_id);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }]
+        };
+      }
+
+      case "fix_metadata": {
+        const { book_id } = z.object({
+          book_id: z.number()
+        }).parse(args);
+        
+        const result = await fixMetadata(db, cli, book_id);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }]
+        };
+      }
+
       case "deep_search_book": {
         const { book_id, query, context_lines } = z.object({
           book_id: z.number(),
@@ -337,6 +406,30 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const result = await deepSearchBook(db, cli, book_id, query, context_lines);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }]
+        };
+      }
+
+      case "semantic_rerank": {
+        const { query, results } = z.object({
+          query: z.string(),
+          results: z.array(z.any())
+        }).parse(args);
+        
+        const reranked = await semanticRerank(query, results);
+        return {
+          content: [{ type: "text", text: JSON.stringify(reranked, null, 2) }]
+        };
+      }
+
+      case "summarize_results": {
+        const { query, results } = z.object({
+          query: z.string(),
+          results: z.array(z.any())
+        }).parse(args);
+        
+        const summary = await summarizeResults(query, results);
+        return {
+          content: [{ type: "text", text: JSON.stringify(summary, null, 2) }]
         };
       }
 
