@@ -263,9 +263,29 @@ export async function getTableOfContents(
   const hasGbox = await Bun.which("gbox");
   if (hasGbox) {
     try {
-      // Get first part of the book to find the visual TOC
+      // Get a larger initial sample to find the TOC page
       const fullText = await cli.convertToText(selectedFile);
-      const sampleText = fullText.split("\n").slice(0, 3000).join("\n");
+      const scanLimit = 30000;
+      const scanText = fullText.substring(0, scanLimit);
+      
+      // Look for common TOC anchors
+      const anchors = ["Table of Contents", "CONTENTS", "Contents", "Index"];
+      let startIndex = 0;
+      
+      for (const anchor of anchors) {
+        const found = scanText.indexOf(anchor);
+        if (found !== -1) {
+          startIndex = Math.max(0, found - 200);
+          break;
+        }
+      }
+
+      if (startIndex === 0 && fullText.length > 5000) {
+        startIndex = 5000;
+      }
+
+      // Sample size for gbox (max ~10k chars to leave room for prompt/output)
+      const sampleText = fullText.substring(startIndex, startIndex + 10000);
       
       const schema = {
         type: "object",
@@ -293,10 +313,10 @@ export async function getTableOfContents(
 
       const gboxProc = spawn(["gbox", "--high", "--json", "--schema", schemaPath, "--prompt", 
         `Extract the Table of Contents from the following book text. Return a hierarchical JSON structure. 
-        Focus on identifying chapter titles and sub-headings.
+        The text starts from character ${startIndex} of the book. Focus on identifying chapter titles and sub-headings.
         
         Text:
-        ${sampleText.substring(0, 6000)}` // ~1500 tokens to leave room for prompt/output
+        ${sampleText}`
       ], {
         stdout: "pipe",
         stderr: "pipe",
@@ -324,6 +344,8 @@ export async function getTableOfContents(
     } catch (e) {
       // Silently fall back to native
     }
+  }
+
   }
 
   // 2. Fallback to native Calibre extraction (calibre-debug)
