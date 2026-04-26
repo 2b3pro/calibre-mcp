@@ -2,6 +2,8 @@ import { CalibreDatabase } from "../calibre/Database";
 import { CalibreCLI } from "../calibre/CalibreCLI";
 import { join } from "path";
 import { spawn } from "bun";
+import { unlink } from "node:fs/promises";
+import { homedir } from "node:os";
 
 export async function fetchOnlineMetadata(cli: CalibreCLI, params: { title?: string, authors?: string, isbn?: string }) {
   return await cli.fetchOnlineMetadata(params.title, params.authors, params.isbn);
@@ -72,14 +74,16 @@ export async function getTableOfContents(
   const libraryPath = db.getLibraryPath();
   const bookDir = join(libraryPath, metadata.path);
   
-  // Prefer EPUB or AZW3 for TOC extraction
+  // Prefer EPUB or AZW3
   const preferredFormats = ["epub", "azw3", "mobi", "pdf"];
   let selectedFile = "";
+  let extension = "";
   
   for (const fmt of preferredFormats) {
     const files = await Array.fromAsync(new Bun.Glob(`*.${fmt}`).scan(bookDir));
     if (files.length > 0 && files[0]) {
       selectedFile = join(bookDir, files[0]);
+      extension = fmt;
       break;
     }
   }
@@ -88,8 +92,74 @@ export async function getTableOfContents(
     throw new Error("No suitable format found for TOC extraction");
   }
 
-  // Use calibre-debug to run a small Python snippet that extracts the TOC
-  // This uses Calibre's internal polish engine which is reliable for EPUB/AZW3
+  // 1. Try gbox for "Smart TOC" extraction if available
+  const hasGbox = await Bun.which("gbox");
+  if (hasGbox) {
+    try {
+      // Get first part of the book to find the visual TOC
+      const fullText = await cli.convertToText(selectedFile);
+      const sampleText = fullText.split("\n").slice(0, 3000).join("\n");
+      
+      const schema = {
+        type: "object",
+        properties: {
+          toc: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                title: { type: "string" },
+                children: {
+                  type: "array",
+                  items: { type: "object", additionalProperties: true }
+                }
+              },
+              required: ["title"]
+            }
+          }
+        },
+        required: ["toc"]
+      };
+
+      const schemaPath = join("/tmp", `toc-schema-${Date.now()}.json`);
+      await Bun.write(schemaPath, JSON.stringify(schema));
+
+      const gboxProc = spawn(["gbox", "--high", "--json", "--schema", schemaPath, "--prompt", 
+        `Extract the Table of Contents from the following book text. Return a hierarchical JSON structure. 
+        Focus on identifying chapter titles and sub-headings.
+        
+        Text:
+        ${sampleText.substring(0, 6000)}` // ~1500 tokens to leave room for prompt/output
+      ], {
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...process.env, CALIBRE_CONFIG_DIRECTORY: join(homedir(), ".calibre-mcp-empty") }
+      });
+
+      const [gboxOutput, gboxStderr] = await Promise.all([
+        new Response(gboxProc.stdout).text(),
+        new Response(gboxProc.stderr).text()
+      ]);
+      
+      await gboxProc.exited;
+      await unlink(schemaPath).catch(() => {});
+
+      if (gboxOutput.trim()) {
+        const result = JSON.parse(gboxOutput.trim());
+        if (result && result.toc && result.toc.length > 0) {
+          return {
+            book: { id: metadata.id, title: metadata.title, authors: metadata.authors },
+            source: "gbox-inference",
+            toc: result.toc
+          };
+        }
+      }
+    } catch (e) {
+      // Silently fall back to native
+    }
+  }
+
+  // 2. Fallback to native Calibre extraction (calibre-debug)
   const pythonSnippet = `
 import json
 import sys
@@ -97,29 +167,27 @@ import os
 from calibre.ebooks.oeb.polish.container import get_container
 from calibre.ebooks.oeb.polish.toc import get_toc
 
+def serialize(node):
+    res = []
+    for child in node:
+        item = {
+            "title": getattr(child, "title", "Unknown"),
+            "href": getattr(child, "href", ""),
+        }
+        if hasattr(child, "children") and len(child.children) > 0:
+            item["children"] = serialize(child.children)
+        res.append(item)
+    return res
+
 def run():
     path = sys.argv[1]
     try:
-        # Use a temporary directory for extraction
         import tempfile
         import shutil
         tdir = tempfile.mkdtemp()
         try:
             container = get_container(path, tdir=tdir)
             toc = get_toc(container)
-            
-            def serialize(node):
-                res = []
-                for child in node:
-                    item = {
-                        "title": getattr(child, "title", "Unknown"),
-                        "href": getattr(child, "href", ""),
-                    }
-                    if hasattr(child, "children") and len(child.children) > 0:
-                        item["children"] = serialize(child.children)
-                    res.append(item)
-                return res
-            
             print("JSON_START")
             print(json.dumps(serialize(toc)))
             print("JSON_END")
@@ -136,6 +204,7 @@ if __name__ == "__main__":
   const proc = spawn(["/Applications/calibre.app/Contents/MacOS/calibre-debug", "-c", pythonSnippet, selectedFile], {
     stdout: "pipe",
     stderr: "pipe",
+    env: { ...process.env, CALIBRE_CONFIG_DIRECTORY: join(homedir(), ".calibre-mcp-empty") }
   });
 
   const outputText = await new Response(proc.stdout).text();
@@ -157,12 +226,13 @@ if __name__ == "__main__":
           title: metadata.title,
           authors: metadata.authors
         },
+        source: "native-calibre",
         toc
       };
     } catch (e) {
-      throw new Error(`Failed to parse TOC JSON: ${e instanceof Error ? e.message : String(e)}`);
+      throw new Error("Failed to parse TOC JSON");
     }
   }
 
-  throw new Error(`Failed to extract TOC: ${stderr || "No valid JSON markers found in output"}`);
+  throw new Error(`Failed to extract TOC: ${stderr || "No valid JSON found"}`);
 }

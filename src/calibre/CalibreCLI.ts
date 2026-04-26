@@ -1,6 +1,7 @@
 import { spawn } from "bun";
 import { join } from "path";
 import { unlink } from "node:fs/promises";
+import { homedir } from "node:os";
 
 export class CalibreCLI {
   private calibreDbPath: string;
@@ -23,6 +24,10 @@ export class CalibreCLI {
     const proc = spawn(cmd, {
       stdout: "pipe",
       stderr: "pipe",
+      env: {
+        ...process.env,
+        CALIBRE_CONFIG_DIRECTORY: join(homedir(), ".calibre-mcp-empty")
+      }
     });
 
     const timeout = setTimeout(() => {
