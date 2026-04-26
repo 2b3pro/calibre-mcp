@@ -17,7 +17,7 @@ describe("CalibreDatabase", () => {
 
     const results = await db.searchMetadata("author:Greene");
     expect(results).toHaveLength(1);
-    expect(results[0].title).toBe("Mastery");
+    if (results[0]) expect(results[0].title).toBe("Mastery");
   });
 
   it("should find books by quoted author field", async () => {
@@ -40,11 +40,11 @@ describe("CalibreDatabase", () => {
 
     const highRating = await db.searchMetadata("rating:>4");
     expect(highRating).toHaveLength(1);
-    expect(highRating[0].title).toBe("Good Book");
+    if (highRating[0]) expect(highRating[0].title).toBe("Good Book");
 
     const lowRating = await db.searchMetadata("rating:<3");
     expect(lowRating).toHaveLength(1);
-    expect(lowRating[0].title).toBe("Meh Book");
+    if (lowRating[0]) expect(lowRating[0].title).toBe("Meh Book");
   });
 
   it("should combine multiple fields with AND", async () => {
@@ -53,13 +53,13 @@ describe("CalibreDatabase", () => {
 
     const results = await db.searchMetadata("author:Greene tag:strategy");
     expect(results).toHaveLength(1);
-    expect(results[0].title).toBe("Laws of Power");
+    if (results[0]) expect(results[0].title).toBe("Laws of Power");
   });
 
   it("should fallback to general search if no fields match", async () => {
     mock.addBook({ id: 1, title: "Mastery", authors: ["Robert Greene"] });
     const results = await db.searchMetadata("Robert");
     expect(results).toHaveLength(1);
-    expect(results[0].title).toBe("Mastery");
+    if (results[0]) expect(results[0].title).toBe("Mastery");
   });
 });

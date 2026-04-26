@@ -21,15 +21,12 @@ describe("search_library tool", () => {
     dbMock.addBook({ id: 1, title: "Mastery", authors: ["Robert Greene"] });
     
     // Spy on CLI to ensure FTS is NOT called
-    const ftsSpy = mock.module("../src/calibre/CalibreCLI", () => ({
-      CalibreCLI: class {
-        fullTextSearch() { throw new Error("Should not be called"); }
-      }
-    }));
+    cli.fullTextSearch = async () => { throw new Error("Should not be called"); };
 
     const results = await searchLibrary(db, cli, "author:Greene");
     expect(results).toHaveLength(1);
-    expect((results[0] as any).title).toBe("Mastery");
+    const firstResult = (results as any[])[0];
+    expect(firstResult?.title).toBe("Mastery");
   });
 
   it("should fallback to metadata search when FTS is not enabled", async () => {

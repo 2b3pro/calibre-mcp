@@ -10,7 +10,7 @@ import { CalibreCLI } from "./calibre/CalibreCLI";
 import { searchLibrary } from "./tools/search";
 import { fetchContent } from "./tools/read";
 import { updateMetadata } from "./tools/write";
-import { fetchOnlineMetadata, polishBook, readFileMetadata, writeFileMetadata } from "./tools/maintenance";
+import { fetchOnlineMetadata, polishBook, readFileMetadata, writeFileMetadata, getTableOfContents } from "./tools/maintenance";
 import { convertEbook } from "./tools/convert";
 import { deepSearchBook } from "./tools/deep_search";
 import { join } from "path";
@@ -169,6 +169,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: "get_toc",
+        description: "Fetch the Table of Contents (TOC) for a specific book. Works for EPUB, AZW3, MOBI, and PDF.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            book_id: { type: "integer", description: "The Calibre book ID" }
+          },
+          required: ["book_id"]
+        }
+      },
+      {
         name: "deep_search_book",
         description: "Search for a query directly inside a specific book by converting it to text on-the-fly. Useful for books not yet indexed by Calibre FTS.",
         inputSchema: {
@@ -294,6 +305,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }).parse(args);
         
         const result = await writeFileMetadata(db, cli, book_id, fields as Record<string, string>, format);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }]
+        };
+      }
+
+      case "get_toc": {
+        const { book_id } = z.object({
+          book_id: z.number()
+        }).parse(args);
+        
+        const result = await getTableOfContents(db, cli, book_id);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }]
         };
