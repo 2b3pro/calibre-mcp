@@ -59,13 +59,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "read_content",
-        description: "Fetch specific content from a book using epub:// URL. Dynamically converts EPUB/PDF to text if needed.",
+        description: "Fetch specific content from a book using epub:// URL. Dynamically converts EPUB/PDF to text if needed. Supports AI-powered OCR cleanup.",
         inputSchema: {
           type: "object",
           properties: {
             url: {
               type: "string",
               description: "epub://author/title@id#start:end URL from search results"
+            },
+            cleanup: {
+              type: "boolean",
+              description: "Enable AI-powered OCR cleanup for poorly extracted text (e.g. from scanned PDFs)",
+              default: false
             }
           },
           required: ["url"]
@@ -215,16 +220,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "read_content": {
-        const { url } = z.object({
-          url: z.string()
+        const { url, cleanup } = z.object({
+          url: z.string(),
+          cleanup: z.boolean().optional().default(false)
         }).parse(args);
         
-        const result = await fetchContent(db, cli, url);
+        const result = await fetchContent(db, cli, url, cleanup);
         return {
           content: [
             { 
               type: "text", 
-              text: `Book: ${result.metadata.title} by ${result.metadata.authors}\nRange: ${result.range.start}-${result.range.end}\n\n${result.content}` 
+              text: `Book: ${result.metadata.title} by ${result.metadata.authors}\nRange: ${result.range.start}-${result.range.end}\nCleaned: ${result.cleaned}${result.warning ? "\nWarning: " + result.warning : ""}\n\n${result.content}` 
             }
           ]
         };

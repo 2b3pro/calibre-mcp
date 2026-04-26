@@ -1,11 +1,14 @@
 import { join } from "path";
 import { CalibreDatabase } from "../calibre/Database";
 import { CalibreCLI } from "../calibre/CalibreCLI";
+import { spawn } from "bun";
+import { homedir } from "node:os";
 
 export async function fetchContent(
   db: CalibreDatabase,
   cli: CalibreCLI,
-  url: string
+  url: string,
+  cleanup: boolean = false
 ) {
   // Parse URL: epub://author/title@id#start:end
   const urlMatch = url.match(/epub:\/\/.+@(\d+)(?:#(\d+):(\d+))?/);
@@ -28,42 +31,84 @@ export async function fetchContent(
   
   // Try to find an existing .txt file first
   const txtFormat = metadata.formats.find(f => f.toLowerCase() === "txt");
-  let content: string;
+  let fullContent: string;
 
   if (txtFormat) {
     const txtPath = join(bookDir, `${metadata.title.replace(/[:\/]/g, "_")} - ${metadata.authors.replace(/[:\/]/g, "_")}.txt`);
     // Fallback if the standard naming convention fails
     const file = Bun.file(txtPath);
     if (await file.exists()) {
-      content = await file.text();
+      fullContent = await file.text();
     } else {
       // Try to find any .txt file in the directory
       const files = await Array.fromAsync(new Bun.Glob("*.txt").scan(bookDir));
       if (files.length > 0 && files[0]) {
-        content = await Bun.file(join(bookDir, files[0])).text();
+        fullContent = await Bun.file(join(bookDir, files[0])).text();
       } else {
-        content = await convertAndRead(metadata, bookDir, cli);
+        fullContent = await convertAndRead(metadata, bookDir, cli);
       }
     }
   } else {
-    content = await convertAndRead(metadata, bookDir, cli);
+    fullContent = await convertAndRead(metadata, bookDir, cli);
   }
 
   // Extract requested lines
+  let extractedContent: string;
+  let range: { start: number; end: number };
+
   if (startLine !== null && endLine !== null) {
-    const lines = content.split("\n");
-    return {
-      metadata,
-      content: lines.slice(startLine - 1, endLine).join("\n"),
-      range: { start: startLine, end: endLine }
-    };
+    const lines = fullContent.split("\n");
+    extractedContent = lines.slice(startLine - 1, endLine).join("\n");
+    range = { start: startLine, end: endLine };
+  } else {
+    // Return first 100 lines by default if no range
+    extractedContent = fullContent.split("\n").slice(0, 100).join("\n");
+    range = { start: 1, end: 100 };
   }
 
-  // Return first 100 lines by default if no range
+  // Smart Cleanup via gbox inference
+  if (cleanup) {
+    const hasGbox = await Bun.which("gbox");
+    if (hasGbox) {
+      try {
+        // gbox limit is 4096 tokens total (input + output). 
+        // We'll limit input to ~8000 characters (~2000 tokens) to leave plenty of room for restoration and output.
+        const inputToGbox = extractedContent.substring(0, 8000);
+        
+        const gboxProc = spawn(["gbox", "--high", "--prompt", 
+          "You are a professional text restorer. The following text contains OCR errors, broken words, and extra symbols. " +
+          "Please rewrite it into clean, natural English while keeping the original meaning and tone exactly as intended. " +
+          "Only return the restored text, no explanations.\n\n" +
+          "Text:\n" + inputToGbox
+        ], {
+          stdout: "pipe",
+          stderr: "pipe",
+          env: { ...process.env, CALIBRE_CONFIG_DIRECTORY: join(homedir(), ".calibre-mcp-empty") }
+        });
+
+        const restoredText = await new Response(gboxProc.stdout).text();
+        await gboxProc.exited;
+
+        if (restoredText.trim()) {
+          return {
+            metadata,
+            content: restoredText.trim(),
+            range,
+            cleaned: true,
+            warning: extractedContent.length > 8000 ? "Note: Text was truncated for AI cleanup due to context limits." : undefined
+          };
+        }
+      } catch (e) {
+        console.error("Gbox cleanup failed:", e);
+      }
+    }
+  }
+
   return {
     metadata,
-    content: content.split("\n").slice(0, 100).join("\n"),
-    range: { start: 1, end: 100 }
+    content: extractedContent,
+    range,
+    cleaned: false
   };
 }
 
