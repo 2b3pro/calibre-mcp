@@ -15,7 +15,12 @@ A Model Context Protocol (MCP) server for searching, reading, and managing your 
 
 - [Calibre](https://calibre-ebook.com/) installed at `/Applications/calibre.app` (macOS).
 - [Bun](https://bun.sh/) runtime installed.
-- A Calibre library (default expected at `~/Calibre Library`).
+- A Calibre library.
+
+## ⚙️ Configuration
+
+The server uses the following environment variables:
+- `CALIBRE_LIBRARY_PATH`: Path to your Calibre library (where `metadata.db` resides). Defaults to `/Volumes/Xarismata/eBooks/CalibreNuevo`.
 
 ## 🛠 Installation
 

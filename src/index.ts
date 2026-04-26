@@ -13,9 +13,12 @@ import { updateMetadata } from "./tools/write";
 import { fetchOnlineMetadata, polishBook, readFileMetadata, writeFileMetadata } from "./tools/maintenance";
 import { convertEbook } from "./tools/convert";
 import { deepSearchBook } from "./tools/deep_search";
+import { join } from "path";
+import { homedir } from "os";
 
 // Initialize Calibre components
-const db = new CalibreDatabase();
+const libraryPath = process.env.CALIBRE_LIBRARY_PATH || "/Volumes/Xarismata/eBooks/CalibreNuevo";
+const db = new CalibreDatabase(libraryPath);
 const cli = new CalibreCLI(db.getLibraryPath());
 
 // Create MCP server
