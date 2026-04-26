@@ -1,4 +1,4 @@
-# calibre-mcp
+# calibre-mcp ![Version 1.0.0](https://img.shields.io/badge/version-1.0.0-blue.svg)
 
 A Model Context Protocol (MCP) server for searching, reading, and managing your Calibre ebook library. Completely rewritten in TypeScript for Bun, it offers ultra-fast performance, deep integration with Calibre's CLI tools, and automated content extraction.
 
@@ -21,7 +21,7 @@ A Model Context Protocol (MCP) server for searching, reading, and managing your 
 
 1. Clone this repository:
 ```bash
-git clone https://github.com/trieloff/calibre-mcp.git
+git clone https://github.com/2b3pro/calibre-mcp.git
 cd calibre-mcp
 ```
 
