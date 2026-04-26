@@ -21,14 +21,30 @@ export async function searchLibrary(
   }
 
   // 2. Full-text search via CLI
-  const ftsResults = await cli.fullTextSearch(query);
+  let ftsResults: any[] = [];
+  let ftsError = null;
+
+  try {
+    ftsResults = await cli.fullTextSearch(query);
+  } catch (e: any) {
+    ftsError = e.message;
+  }
+
   if (ftsResults.length === 0) {
-    // Fallback to title/author search if FTS fails
+    // Fallback to title/author search if FTS fails or returns nothing
     const results = await db.searchMetadata(query, limit);
-    return results.map(r => ({
+    const mappedResults = results.map(r => ({
       ...r,
       url: `epub://${encodeURIComponent(r.authors)}/${encodeURIComponent(r.title)}@${r.id}`
     }));
+
+    if (ftsError && ftsError.includes("Full text searching is not enabled")) {
+      return {
+        results: mappedResults,
+        advisory: "Note: Full-text search is not indexed on this library. Falling back to metadata match. Run 'calibredb fts_index enable' in your terminal to enable it."
+      };
+    }
+    return mappedResults;
   }
 
   // 3. Enrich FTS results with metadata

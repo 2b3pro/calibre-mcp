@@ -31,11 +31,16 @@ export class CalibreCLI {
 
     try {
       const stdout = await new Response(proc.stdout).text();
-      const stderr = await new Response(proc.stderr).text();
+      const stderrText = await new Response(proc.stderr).text();
+      
+      // Filter out common plugin initialization noise
+      const stderr = stderrText.split("\n")
+        .filter(line => !line.startsWith("Failed to initialize plugin:") && line.trim().length > 0)
+        .join("\n");
       
       const exitCode = await proc.exited;
       if (exitCode !== 0) {
-        throw new Error(`Command failed with exit code ${exitCode}: ${stderr}`);
+        throw new Error(`Command failed with exit code ${exitCode}${stderr ? ": " + stderr : ""}`);
       }
       
       return stdout;

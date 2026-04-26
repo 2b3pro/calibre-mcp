@@ -5,7 +5,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { CalibreDatabase } from "./calibre/Database";
+import { CalibreDatabase, DEFAULT_LIBRARY_PATH } from "./calibre/Database";
 import { CalibreCLI } from "./calibre/CalibreCLI";
 import { searchLibrary } from "./tools/search";
 import { fetchContent } from "./tools/read";
@@ -17,7 +17,7 @@ import { join } from "path";
 import { homedir } from "os";
 
 // Initialize Calibre components
-const libraryPath = process.env.CALIBRE_LIBRARY_PATH || "/Volumes/Xarismata/eBooks/CalibreNuevo";
+const libraryPath = process.env.CALIBRE_LIBRARY_PATH || DEFAULT_LIBRARY_PATH;
 const db = new CalibreDatabase(libraryPath);
 const cli = new CalibreCLI(db.getLibraryPath());
 
