@@ -22,10 +22,14 @@ export class CalibreDatabase {
   private db: Database;
   private libraryPath: string;
 
-  constructor(libraryPath?: string) {
+  constructor(libraryPath?: string, db?: Database) {
     this.libraryPath = libraryPath || DEFAULT_LIBRARY_PATH;
-    const dbPath = join(this.libraryPath, "metadata.db");
-    this.db = new Database(dbPath, { readonly: true });
+    if (db) {
+      this.db = db;
+    } else {
+      const dbPath = join(this.libraryPath, "metadata.db");
+      this.db = new Database(dbPath, { readonly: true });
+    }
   }
 
   public async searchMetadata(query: string, limit: number = 50): Promise<BookMetadata[]> {
@@ -101,8 +105,7 @@ export class CalibreDatabase {
         (SELECT name FROM series JOIN books_series_link ON series.id = series WHERE book = books.id) as series,
         books.series_index,
         (SELECT GROUP_CONCAT(name, ',') FROM tags JOIN books_tags_link ON tags.id = tag WHERE book = books.id) as tags,
-        (SELECT name FROM publishers JOIN publishers ON publishers.id = publisher WHERE books.id = publisher) as publisher_dummy, -- Fix publisher join
-        (SELECT name FROM publishers JOIN books_publishers_link ON publishers.id = publisher WHERE book = books.id) as publisher,
+        (SELECT publishers.name FROM publishers JOIN books_publishers_link ON publishers.id = publisher WHERE book = books.id) as publisher,
         books.pubdate,
         (SELECT text FROM comments WHERE book = books.id) as comments,
         (SELECT GROUP_CONCAT(format, ',') FROM data WHERE book = books.id) as formats,
