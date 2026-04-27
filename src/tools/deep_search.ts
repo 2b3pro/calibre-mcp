@@ -4,6 +4,7 @@ import { join } from "path";
 import { spawn } from "bun";
 import { homedir } from "node:os";
 import { unlink } from "node:fs/promises";
+import { AIFactory } from "../ai/Provider";
 
 export async function semanticRerank(
   query: string,
@@ -11,10 +12,9 @@ export async function semanticRerank(
 ) {
   if (results.length <= 1) return results;
 
-  const hasGbox = await Bun.which("gbox");
-  if (!hasGbox) return results;
+  const provider = AIFactory.getProvider();
 
-  // Prepare the results for gbox
+  // Prepare the results for AI
   const samples = results.map((r, i) => ({
     id: i,
     text: r.text || r.comments || r.title
@@ -32,33 +32,16 @@ export async function semanticRerank(
     required: ["ranked_ids"]
   };
 
-  const schemaPath = join("/tmp", `rank-schema-${Date.now()}.json`);
-  await Bun.write(schemaPath, JSON.stringify(schema));
-
   try {
-    const gboxProc = spawn(["gbox", "--high", "--json", "--schema", schemaPath, "--prompt", 
-      `Rank the following search results by their relevance to the conceptual query: "${query}".
+    const result = await provider.generateJSON<any>({
+      prompt: `Rank the following search results by their relevance to the conceptual query: "${query}".
       Return only the IDs in the new order.
       
       Results:
-      ${JSON.stringify(samples)}`
-    ], {
-      stdout: "pipe",
-      stderr: "pipe",
-      env: { ...process.env, CALIBRE_CONFIG_DIRECTORY: join(homedir(), ".calibre-mcp-empty") }
+      ${JSON.stringify(samples)}`,
+      schema
     });
 
-    const [output, stderr] = await Promise.all([
-      new Response(gboxProc.stdout).text(),
-      new Response(gboxProc.stderr).text()
-    ]);
-    
-    await gboxProc.exited;
-    await unlink(schemaPath).catch(() => {});
-
-    if (!output.trim()) return results;
-
-    const result = JSON.parse(output.trim());
     const rankedIds = result.ranked_ids as number[];
 
     // Reorder the original results based on AI ranking
@@ -71,7 +54,6 @@ export async function semanticRerank(
     
     return [...reordered, ...remaining];
   } catch (e) {
-    await unlink(schemaPath).catch(() => {});
     return results; // Graceful fallback
   }
 }

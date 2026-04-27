@@ -13,11 +13,11 @@ export class CalibreCLI {
 
   constructor(libraryPath: string) {
     this.libraryPath = libraryPath;
-    this.calibreDbPath = "/Applications/calibre.app/Contents/MacOS/calibredb";
-    this.ebookConvertPath = "/Applications/calibre.app/Contents/MacOS/ebook-convert";
-    this.fetchMetadataPath = "/Applications/calibre.app/Contents/MacOS/fetch-ebook-metadata";
-    this.ebookPolishPath = "/Applications/calibre.app/Contents/MacOS/ebook-polish";
-    this.ebookMetaPath = "/Applications/calibre.app/Contents/MacOS/ebook-meta";
+    this.calibreDbPath = process.env.CALIBRE_DB_PATH || "/Applications/calibre.app/Contents/MacOS/calibredb";
+    this.ebookConvertPath = process.env.EBOOK_CONVERT_PATH || "/Applications/calibre.app/Contents/MacOS/ebook-convert";
+    this.fetchMetadataPath = process.env.FETCH_METADATA_PATH || "/Applications/calibre.app/Contents/MacOS/fetch-ebook-metadata";
+    this.ebookPolishPath = process.env.EBOOK_POLISH_PATH || "/Applications/calibre.app/Contents/MacOS/ebook-polish";
+    this.ebookMetaPath = process.env.EBOOK_META_PATH || "/Applications/calibre.app/Contents/MacOS/ebook-meta";
   }
 
   private async runCommand(cmd: string[], timeoutMs: number = 30000): Promise<string> {

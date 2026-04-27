@@ -20,7 +20,27 @@ A Model Context Protocol (MCP) server for searching, reading, and managing your 
 ## ⚙️ Configuration
 
 The server uses the following environment variables:
-- `CALIBRE_LIBRARY_PATH`: Path to your Calibre library (where `metadata.db` resides). Defaults to `/Volumes/Xarismata/eBooks/CalibreNuevo`.
+
+### Calibre Settings
+- `CALIBRE_LIBRARY_PATH`: Path to your Calibre library. Defaults to `/Volumes/Xarismata/eBooks/CalibreNuevo`.
+- `CALIBRE_DB_PATH`: Path to `calibredb` binary.
+- `EBOOK_CONVERT_PATH`: Path to `ebook-convert` binary.
+- `FETCH_METADATA_PATH`: Path to `fetch-ebook-metadata` binary.
+- `EBOOK_POLISH_PATH`: Path to `ebook-polish` binary.
+- `EBOOK_META_PATH`: Path to `ebook-meta` binary.
+
+### AI Provider Settings
+The MCP server supports multiple AI providers for Smart TOC, OCR Cleanup, and Tag Suggestions.
+
+- `AI_PROVIDER`: Choice of `gbox` (default), `openai`, `anthropic`, `gemini`, or `ollama`.
+- `AI_MODEL`: Specific model to use (e.g., `gpt-4o`, `claude-3-5-sonnet-20240620`, `llama3`).
+
+#### Provider Specifics:
+- **OpenAI**: Requires `OPENAI_API_KEY`. Optional: `OPENAI_BASE_URL`.
+- **Anthropic**: Requires `ANTHROPIC_API_KEY`.
+- **Gemini**: Requires `GEMINI_API_KEY`.
+- **Ollama**: Optional: `OLLAMA_BASE_URL` (defaults to `http://localhost:11434/v1`).
+- **Gbox**: Local inference (macOS recommended).
 
 ## 🛠 Installation
 

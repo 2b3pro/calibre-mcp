@@ -4,6 +4,7 @@ import { join } from "path";
 import { spawn } from "bun";
 import { unlink } from "node:fs/promises";
 import { homedir } from "node:os";
+import { AIFactory } from "../ai/Provider";
 
 export async function fetchOnlineMetadata(cli: CalibreCLI, params: { title?: string, authors?: string, isbn?: string }) {
   return await cli.fetchOnlineMetadata(params.title, params.authors, params.isbn);
@@ -84,8 +85,7 @@ export async function fixMetadata(
   // Title page and copyright page are usually in the first 4000 chars
   const sample = fullText.substring(0, 4000); 
 
-  const hasGbox = await Bun.which("gbox");
-  if (!hasGbox) throw new Error("gbox utility not found in PATH");
+  const provider = AIFactory.getProvider();
 
   const schema = {
     type: "object",
@@ -99,41 +99,15 @@ export async function fixMetadata(
     required: ["title", "authors"]
   };
 
-  const schemaPath = join("/tmp", `meta-schema-${Date.now()}.json`);
-  await Bun.write(schemaPath, JSON.stringify(schema));
-
   try {
-    const gboxProc = spawn(["gbox", "--high", "--json", "--schema", schemaPath, "--prompt", 
-      `Extract the correct book metadata from the following text sample. 
+    const result = await provider.generateJSON<any>({
+      prompt: `Extract the correct book metadata from the following text sample. 
       Often the text contains noise from OCR or file naming - ignore it and find the real title and author.
       
       Text sample:
-      ${sample}`
-    ], {
-      stdout: "pipe",
-      stderr: "pipe",
-      env: { ...process.env, CALIBRE_CONFIG_DIRECTORY: join(homedir(), ".calibre-mcp-empty") }
+      ${sample}`,
+      schema
     });
-
-    const [output, stderr] = await Promise.all([
-      new Response(gboxProc.stdout).text(),
-      new Response(gboxProc.stderr).text()
-    ]);
-    
-    await gboxProc.exited;
-    await unlink(schemaPath).catch(() => {});
-
-    if (!output.trim()) throw new Error(`Gbox failed: ${stderr}`);
-
-    let result = JSON.parse(output.trim());
-    
-    // Handle gbox internal parse errors
-    if (result.error && result.raw && typeof result.raw === "string") {
-      try {
-        const rawParsed = JSON.parse(result.raw);
-        if (rawParsed.title) result = rawParsed;
-      } catch (e) {}
-    }
 
     // Auto-update the database
     const fields: Record<string, string> = {
@@ -151,10 +125,10 @@ export async function fixMetadata(
       book_id: bookId,
       status: "updated",
       previous: { title: metadata.title, authors: metadata.authors },
-      recovered: result
+      recovered: result,
+      provider: provider.name
     };
   } catch (e) {
-    await unlink(schemaPath).catch(() => {});
     throw e;
   }
 }
@@ -180,11 +154,10 @@ export async function suggestTags(
   const inputPath = join(bookDir, files[0]);
   const fullText = await cli.convertToText(inputPath);
   
-  // Take a sample from the beginning (skipping very first front matter if possible, but 5000 chars usually hits the intro)
+  // Take a sample from the intro
   const sample = fullText.substring(500, 6500); 
 
-  const hasGbox = await Bun.which("gbox");
-  if (!hasGbox) throw new Error("gbox utility not found in PATH");
+  const provider = AIFactory.getProvider();
 
   const schema = {
     type: "object",
@@ -198,47 +171,23 @@ export async function suggestTags(
     required: ["tags"]
   };
 
-  const schemaPath = join("/tmp", `tag-schema-${Date.now()}.json`);
-  await Bun.write(schemaPath, JSON.stringify(schema));
-
   try {
-    const gboxProc = spawn(["gbox", "--high", "--json", "--schema", schemaPath, "--prompt", 
-      `Analyze the following book sample and suggest 5-8 descriptive category tags for a library.
+    const result = await provider.generateJSON<any>({
+      prompt: `Analyze the following book sample and suggest 5-8 descriptive category tags for a library.
       The book title is: ${metadata.title} by ${metadata.authors}.
       
       Text sample:
-      ${sample}`
-    ], {
-      stdout: "pipe",
-      stderr: "pipe",
-      env: { ...process.env, CALIBRE_CONFIG_DIRECTORY: join(homedir(), ".calibre-mcp-empty") }
+      ${sample}`,
+      schema
     });
-
-    const [output, stderr] = await Promise.all([
-      new Response(gboxProc.stdout).text(),
-      new Response(gboxProc.stderr).text()
-    ]);
-    
-    await gboxProc.exited;
-    await unlink(schemaPath).catch(() => {});
-
-    if (!output.trim()) throw new Error(`Gbox failed: ${stderr}`);
-
-    let result = JSON.parse(output.trim());
-    if (result.error && result.raw && typeof result.raw === "string") {
-      try {
-        const rawParsed = JSON.parse(result.raw);
-        if (rawParsed.tags) result = rawParsed;
-      } catch (e) {}
-    }
 
     return {
       book: { id: metadata.id, title: metadata.title, authors: metadata.authors },
       current_tags: metadata.tags,
-      suggested_tags: result.tags
+      suggested_tags: result.tags,
+      provider: provider.name
     };
   } catch (e) {
-    await unlink(schemaPath).catch(() => {});
     throw e;
   }
 }
@@ -256,6 +205,7 @@ export async function getTableOfContents(
   const libraryPath = db.getLibraryPath();
   const bookDir = join(libraryPath, metadata.path);
   
+  // Prefer EPUB or AZW3
   const preferredFormats = ["epub", "azw3", "mobi", "pdf"];
   let selectedFile = "";
   
@@ -271,107 +221,83 @@ export async function getTableOfContents(
     throw new Error("No suitable format found for TOC extraction");
   }
 
-  // 1. Try gbox for "Smart TOC" extraction if available
-  const hasGbox = await Bun.which("gbox");
-  if (hasGbox) {
-    try {
-      const fullText = await cli.convertToText(selectedFile);
-      const scanSize = 50000;
-      const startScan = fullText.substring(0, scanSize);
-      const endScan = fullText.substring(Math.max(0, fullText.length - scanSize));
-      
-      const anchors = ["Table of Contents", "CONTENTS", "Contents", "Index"];
-      let startIndex = -1;
-      
+  // 1. Try AI provider for "Smart TOC" extraction
+  const provider = AIFactory.getProvider();
+  
+  try {
+    const fullText = await cli.convertToText(selectedFile);
+    const scanSize = 50000;
+    const startScan = fullText.substring(0, scanSize);
+    const endScan = fullText.substring(Math.max(0, fullText.length - scanSize));
+    
+    const anchors = ["Table of Contents", "CONTENTS", "Contents", "Index"];
+    let startIndex = -1;
+    
+    // Check start of book
+    for (const anchor of anchors) {
+      const found = startScan.indexOf(anchor);
+      if (found !== -1) {
+        startIndex = Math.max(0, found - 200);
+        break;
+      }
+    }
+
+    // Check end of book if not found at start
+    if (startIndex === -1) {
       for (const anchor of anchors) {
-        const found = startScan.indexOf(anchor);
+        const found = endScan.indexOf(anchor);
         if (found !== -1) {
-          startIndex = Math.max(0, found - 200);
+          startIndex = Math.max(0, (fullText.length - scanSize) + found - 200);
           break;
         }
       }
-
-      if (startIndex === -1) {
-        for (const anchor of anchors) {
-          const found = endScan.indexOf(anchor);
-          if (found !== -1) {
-            startIndex = Math.max(0, (fullText.length - scanSize) + found - 200);
-            break;
-          }
-        }
-      }
-
-      if (startIndex === -1) {
-        startIndex = fullText.length > 5000 ? 5000 : 0;
-      }
-
-      const sampleText = fullText.substring(startIndex, startIndex + 12000);
-      
-      const schema = {
-        type: "object",
-        properties: {
-          toc: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                title: { type: "string" },
-                children: {
-                  type: "array",
-                  items: { type: "object", additionalProperties: true }
-                }
-              },
-              required: ["title"]
-            }
-          }
-        },
-        required: ["toc"]
-      };
-
-      const schemaPath = join("/tmp", `toc-schema-${Date.now()}.json`);
-      await Bun.write(schemaPath, JSON.stringify(schema));
-
-      const gboxProc = spawn(["gbox", "--high", "--json", "--schema", schemaPath, "--prompt", 
-        `Extract the Table of Contents from the following book text. Return a hierarchical JSON structure. 
-        Ignore front matter and focus on identifying chapter titles.
-        
-        Text:
-        ${sampleText}`
-      ], {
-        stdout: "pipe",
-        stderr: "pipe",
-        env: { ...process.env, CALIBRE_CONFIG_DIRECTORY: join(homedir(), ".calibre-mcp-empty") }
-      });
-
-      const [gboxOutput, gboxStderr] = await Promise.all([
-        new Response(gboxProc.stdout).text(),
-        new Response(gboxProc.stderr).text()
-      ]);
-      
-      await gboxProc.exited;
-      await unlink(schemaPath).catch(() => {});
-
-      if (gboxOutput.trim()) {
-        let result = JSON.parse(gboxOutput.trim());
-        
-        if (result.error && result.raw && typeof result.raw === "string") {
-          try {
-            const rawParsed = JSON.parse(result.raw);
-            if (rawParsed.toc) result = rawParsed;
-          } catch (e) {}
-        }
-
-        if (result && result.toc && result.toc.length > 0) {
-          return {
-            book: { id: metadata.id, title: metadata.title, authors: metadata.authors },
-            source: "gbox-inference",
-            toc: result.toc
-          };
-        }
-      }
-    } catch (e) {
-      // Fallback
     }
+
+    if (startIndex === -1) {
+      startIndex = fullText.length > 5000 ? 5000 : 0;
+    }
+
+    const sampleText = fullText.substring(startIndex, startIndex + 12000);
+    
+    const schema = {
+      type: "object",
+      properties: {
+        toc: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              title: { type: "string" },
+              children: {
+                type: "array",
+                items: { type: "object", additionalProperties: true }
+              }
+            },
+            required: ["title"]
+          }
+        }
+      },
+      required: ["toc"]
+    };
+
+    const result = await provider.generateJSON<any>({
+      prompt: `Extract the Table of Contents from the following book text. Return a hierarchical JSON structure. 
+      Focus on identifying chapter titles and sub-headings.
+      
+      Text:
+      ${sampleText}`,
+      schema
+    });
+
+    if (result && result.toc && result.toc.length > 0) {
+      return {
+        book: { id: metadata.id, title: metadata.title, authors: metadata.authors },
+        source: `${provider.name}-inference`,
+        toc: result.toc
+      };
+    }
+  } catch (e) {
+    // Fallback
   }
 
   // 2. Fallback to native Calibre extraction (calibre-debug)
@@ -416,8 +342,10 @@ if __name__ == "__main__":
     run()
 `;
 
+  // Use a longer timeout for native TOC extraction as it might be slow for huge books
   const outputText = await cli.runPythonScript(pythonSnippet, 120000);
 
+  // Extract JSON between markers
   const startMarker = "JSON_START";
   const endMarker = "JSON_END";
   const startIdx = outputText.indexOf(startMarker);

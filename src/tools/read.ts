@@ -3,6 +3,7 @@ import { CalibreDatabase } from "../calibre/Database";
 import { CalibreCLI } from "../calibre/CalibreCLI";
 import { spawn } from "bun";
 import { homedir } from "node:os";
+import { AIFactory } from "../ai/Provider";
 
 export async function fetchContent(
   db: CalibreDatabase,
@@ -66,41 +67,32 @@ export async function fetchContent(
     range = { start: 1, end: 100 };
   }
 
-  // Smart Cleanup via gbox inference
+  // Smart Cleanup via AI provider
   if (cleanup) {
-    const hasGbox = await Bun.which("gbox");
-    if (hasGbox) {
-      try {
-        // gbox limit is 4096 tokens total (input + output). 
-        // We'll limit input to ~8000 characters (~2000 tokens) to leave plenty of room for restoration and output.
-        const inputToGbox = extractedContent.substring(0, 8000);
-        
-        const gboxProc = spawn(["gbox", "--high", "--prompt", 
-          "You are a professional text restorer. The following text contains OCR errors, broken words, and extra symbols. " +
-          "Please rewrite it into clean, natural English while keeping the original meaning and tone exactly as intended. " +
-          "Only return the restored text, no explanations.\n\n" +
-          "Text:\n" + inputToGbox
-        ], {
-          stdout: "pipe",
-          stderr: "pipe",
-          env: { ...process.env, CALIBRE_CONFIG_DIRECTORY: join(homedir(), ".calibre-mcp-empty") }
-        });
+    const provider = AIFactory.getProvider();
+    try {
+      // Input capped to stay within token limits
+      const inputToAI = extractedContent.substring(0, 8000);
+      
+      const restoredText = await provider.generateText({
+        prompt: "You are a professional text restorer. The following text contains OCR errors, broken words, and extra symbols. " +
+                "Please rewrite it into clean, natural English while keeping the original meaning and tone exactly as intended. " +
+                "Only return the restored text, no explanations.\n\n" +
+                "Text:\n" + inputToAI
+      });
 
-        const restoredText = await new Response(gboxProc.stdout).text();
-        await gboxProc.exited;
-
-        if (restoredText.trim()) {
-          return {
-            metadata,
-            content: restoredText.trim(),
-            range,
-            cleaned: true,
-            warning: extractedContent.length > 8000 ? "Note: Text was truncated for AI cleanup due to context limits." : undefined
-          };
-        }
-      } catch (e) {
-        console.error("Gbox cleanup failed:", e);
+      if (restoredText.trim()) {
+        return {
+          metadata,
+          content: restoredText.trim(),
+          range,
+          cleaned: true,
+          provider: provider.name,
+          warning: extractedContent.length > 8000 ? "Note: Text was truncated for AI cleanup due to context limits." : undefined
+        };
       }
+    } catch (e) {
+      console.error("AI cleanup failed:", e);
     }
   }
 
