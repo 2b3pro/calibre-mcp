@@ -125,8 +125,16 @@ export async function fixMetadata(
 
     if (!output.trim()) throw new Error(`Gbox failed: ${stderr}`);
 
-    const result = JSON.parse(output.trim());
+    let result = JSON.parse(output.trim());
     
+    // Handle gbox internal parse errors
+    if (result.error && result.raw && typeof result.raw === "string") {
+      try {
+        const rawParsed = JSON.parse(result.raw);
+        if (rawParsed.title) result = rawParsed;
+      } catch (e) {}
+    }
+
     // Auto-update the database
     const fields: Record<string, string> = {
       title: result.title,
@@ -216,7 +224,14 @@ export async function suggestTags(
 
     if (!output.trim()) throw new Error(`Gbox failed: ${stderr}`);
 
-    const result = JSON.parse(output.trim());
+    let result = JSON.parse(output.trim());
+    if (result.error && result.raw && typeof result.raw === "string") {
+      try {
+        const rawParsed = JSON.parse(result.raw);
+        if (rawParsed.tags) result = rawParsed;
+      } catch (e) {}
+    }
+
     return {
       book: { id: metadata.id, title: metadata.title, authors: metadata.authors },
       current_tags: metadata.tags,
@@ -241,16 +256,13 @@ export async function getTableOfContents(
   const libraryPath = db.getLibraryPath();
   const bookDir = join(libraryPath, metadata.path);
   
-  // Prefer EPUB or AZW3
   const preferredFormats = ["epub", "azw3", "mobi", "pdf"];
   let selectedFile = "";
-  let extension = "";
   
   for (const fmt of preferredFormats) {
     const files = await Array.fromAsync(new Bun.Glob(`*.${fmt}`).scan(bookDir));
     if (files.length > 0 && files[0]) {
       selectedFile = join(bookDir, files[0]);
-      extension = fmt;
       break;
     }
   }
@@ -263,29 +275,37 @@ export async function getTableOfContents(
   const hasGbox = await Bun.which("gbox");
   if (hasGbox) {
     try {
-      // Get a larger initial sample to find the TOC page
       const fullText = await cli.convertToText(selectedFile);
-      const scanLimit = 30000;
-      const scanText = fullText.substring(0, scanLimit);
+      const scanSize = 50000;
+      const startScan = fullText.substring(0, scanSize);
+      const endScan = fullText.substring(Math.max(0, fullText.length - scanSize));
       
-      // Look for common TOC anchors
       const anchors = ["Table of Contents", "CONTENTS", "Contents", "Index"];
-      let startIndex = 0;
+      let startIndex = -1;
       
       for (const anchor of anchors) {
-        const found = scanText.indexOf(anchor);
+        const found = startScan.indexOf(anchor);
         if (found !== -1) {
           startIndex = Math.max(0, found - 200);
           break;
         }
       }
 
-      if (startIndex === 0 && fullText.length > 5000) {
-        startIndex = 5000;
+      if (startIndex === -1) {
+        for (const anchor of anchors) {
+          const found = endScan.indexOf(anchor);
+          if (found !== -1) {
+            startIndex = Math.max(0, (fullText.length - scanSize) + found - 200);
+            break;
+          }
+        }
       }
 
-      // Sample size for gbox (max ~10k chars to leave room for prompt/output)
-      const sampleText = fullText.substring(startIndex, startIndex + 10000);
+      if (startIndex === -1) {
+        startIndex = fullText.length > 5000 ? 5000 : 0;
+      }
+
+      const sampleText = fullText.substring(startIndex, startIndex + 12000);
       
       const schema = {
         type: "object",
@@ -313,7 +333,7 @@ export async function getTableOfContents(
 
       const gboxProc = spawn(["gbox", "--high", "--json", "--schema", schemaPath, "--prompt", 
         `Extract the Table of Contents from the following book text. Return a hierarchical JSON structure. 
-        The text starts from character ${startIndex} of the book. Focus on identifying chapter titles and sub-headings.
+        Ignore front matter and focus on identifying chapter titles.
         
         Text:
         ${sampleText}`
@@ -332,7 +352,15 @@ export async function getTableOfContents(
       await unlink(schemaPath).catch(() => {});
 
       if (gboxOutput.trim()) {
-        const result = JSON.parse(gboxOutput.trim());
+        let result = JSON.parse(gboxOutput.trim());
+        
+        if (result.error && result.raw && typeof result.raw === "string") {
+          try {
+            const rawParsed = JSON.parse(result.raw);
+            if (rawParsed.toc) result = rawParsed;
+          } catch (e) {}
+        }
+
         if (result && result.toc && result.toc.length > 0) {
           return {
             book: { id: metadata.id, title: metadata.title, authors: metadata.authors },
@@ -342,10 +370,8 @@ export async function getTableOfContents(
         }
       }
     } catch (e) {
-      // Silently fall back to native
+      // Fallback
     }
-  }
-
   }
 
   // 2. Fallback to native Calibre extraction (calibre-debug)
@@ -369,7 +395,7 @@ def serialize(node):
     return res
 
 def run():
-    path = sys.argv[1]
+    path = r"${selectedFile}"
     try:
         import tempfile
         import shutil
@@ -390,23 +416,15 @@ if __name__ == "__main__":
     run()
 `;
 
-  const proc = spawn(["/Applications/calibre.app/Contents/MacOS/calibre-debug", "-c", pythonSnippet, selectedFile], {
-    stdout: "pipe",
-    stderr: "pipe",
-    env: { ...process.env, CALIBRE_CONFIG_DIRECTORY: join(homedir(), ".calibre-mcp-empty") }
-  });
+  const outputText = await cli.runPythonScript(pythonSnippet, 120000);
 
-  const outputText = await new Response(proc.stdout).text();
-  const stderr = await new Response(proc.stderr).text();
-
-  // Extract JSON between markers
   const startMarker = "JSON_START";
   const endMarker = "JSON_END";
-  const startIndex = outputText.indexOf(startMarker);
-  const endIndex = outputText.indexOf(endMarker);
+  const startIdx = outputText.indexOf(startMarker);
+  const endIdx = outputText.indexOf(endMarker);
 
-  if (startIndex !== -1 && endIndex !== -1) {
-    const jsonStr = outputText.substring(startIndex + startMarker.length, endIndex).trim();
+  if (startIdx !== -1 && endIdx !== -1) {
+    const jsonStr = outputText.substring(startIdx + startMarker.length, endIdx).trim();
     try {
       const toc = JSON.parse(jsonStr);
       return {
@@ -419,9 +437,9 @@ if __name__ == "__main__":
         toc
       };
     } catch (e) {
-      throw new Error("Failed to parse TOC JSON");
+      throw new Error(`Failed to parse native TOC JSON`);
     }
   }
 
-  throw new Error(`Failed to extract TOC: ${stderr || "No valid JSON found"}`);
+  throw new Error(`Failed to extract TOC: No valid JSON found in native output`);
 }

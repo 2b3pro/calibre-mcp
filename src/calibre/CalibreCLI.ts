@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { join } from "path";
-import { unlink } from "node:fs/promises";
+import { unlink, mkdir, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 
 export class CalibreCLI {
@@ -21,12 +21,15 @@ export class CalibreCLI {
   }
 
   private async runCommand(cmd: string[], timeoutMs: number = 30000): Promise<string> {
+    const configDir = join("/tmp", `calibre-mcp-cfg-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    await mkdir(configDir, { recursive: true });
+
     const proc = spawn(cmd, {
       stdout: "pipe",
       stderr: "pipe",
       env: {
         ...process.env,
-        CALIBRE_CONFIG_DIRECTORY: join(homedir(), ".calibre-mcp-empty")
+        CALIBRE_CONFIG_DIRECTORY: configDir
       }
     });
 
@@ -51,6 +54,22 @@ export class CalibreCLI {
       return stdout;
     } finally {
       clearTimeout(timeout);
+      await rm(configDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
+  public async runPythonScript(script: string, timeoutMs: number = 60000): Promise<string> {
+    const scriptPath = join("/tmp", `calibre-mcp-script-${Date.now()}.py`);
+    await Bun.write(scriptPath, script);
+    
+    try {
+      return await this.runCommand([
+        "/Applications/calibre.app/Contents/MacOS/calibre-debug",
+        "-e",
+        scriptPath
+      ], timeoutMs);
+    } finally {
+      await unlink(scriptPath).catch(() => {});
     }
   }
 
