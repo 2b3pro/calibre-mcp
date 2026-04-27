@@ -11,4 +11,4 @@ export interface AIProvider {
   generateText(request: AIRequest): Promise<string>;
 }
 
-export type ProviderType = "gbox" | "openai" | "anthropic" | "gemini" | "ollama";
+export type ProviderType = "gbox" | "gbox-server" | "openai" | "anthropic" | "gemini" | "ollama";

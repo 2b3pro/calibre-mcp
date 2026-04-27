@@ -18,6 +18,9 @@ export class AIFactory {
         return new AnthropicProvider();
       case "gemini":
         return new GeminiProvider();
+      case "gbox-server" as any:
+        process.env.OPENAI_BASE_URL = "http://localhost:8955/v1";
+        return new OpenAIProvider("openai");
       default:
         console.error(`Unknown AI provider type: ${type}, falling back to gbox`);
         return new GboxProvider();

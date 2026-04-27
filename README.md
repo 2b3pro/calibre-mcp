@@ -32,11 +32,12 @@ The server uses the following environment variables:
 ### AI Provider Settings
 The MCP server uses a modular provider system. You can switch between local and cloud models easily.
 
-- `AI_PROVIDER`: Choice of `gbox` (default), `openai`, `anthropic`, `gemini`, or `ollama`.
+- `AI_PROVIDER`: Choice of `gbox` (default), `gbox-server` (fastest local), `openai`, `anthropic`, `gemini`, or `ollama`.
 - `AI_MODEL`: Specific model to use.
 
 #### Provider Specifics:
-- **Gbox**: Local inference for macOS. No API key needed.
+- **Gbox-Server**: Fast local inference via `gbox --server`. No API key needed. Port 8955.
+- **Gbox**: Local inference via CLI (macOS).
 - **OpenAI**: Requires `OPENAI_API_KEY`.
 - **Anthropic**: Requires `ANTHROPIC_API_KEY`.
 - **Gemini**: Requires `GEMINI_API_KEY`.
