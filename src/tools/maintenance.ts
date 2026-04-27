@@ -4,7 +4,7 @@ import { join } from "path";
 import { spawn } from "bun";
 import { unlink } from "node:fs/promises";
 import { homedir } from "node:os";
-import { AIFactory } from "../ai/Provider";
+import { AIFactory } from "../ai";
 
 export async function fetchOnlineMetadata(cli: CalibreCLI, params: { title?: string, authors?: string, isbn?: string }) {
   return await cli.fetchOnlineMetadata(params.title, params.authors, params.isbn);

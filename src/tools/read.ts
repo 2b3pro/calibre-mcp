@@ -3,7 +3,7 @@ import { CalibreDatabase } from "../calibre/Database";
 import { CalibreCLI } from "../calibre/CalibreCLI";
 import { spawn } from "bun";
 import { homedir } from "node:os";
-import { AIFactory } from "../ai/Provider";
+import { AIFactory } from "../ai";
 
 export async function fetchContent(
   db: CalibreDatabase,

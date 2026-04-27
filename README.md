@@ -30,17 +30,24 @@ The server uses the following environment variables:
 - `EBOOK_META_PATH`: Path to `ebook-meta` binary.
 
 ### AI Provider Settings
-The MCP server supports multiple AI providers for Smart TOC, OCR Cleanup, and Tag Suggestions.
+The MCP server uses a modular provider system. You can switch between local and cloud models easily.
 
 - `AI_PROVIDER`: Choice of `gbox` (default), `openai`, `anthropic`, `gemini`, or `ollama`.
-- `AI_MODEL`: Specific model to use (e.g., `gpt-4o`, `claude-3-5-sonnet-20240620`, `llama3`).
+- `AI_MODEL`: Specific model to use.
 
 #### Provider Specifics:
-- **OpenAI**: Requires `OPENAI_API_KEY`. Optional: `OPENAI_BASE_URL`.
+- **Gbox**: Local inference for macOS. No API key needed.
+- **OpenAI**: Requires `OPENAI_API_KEY`.
 - **Anthropic**: Requires `ANTHROPIC_API_KEY`.
 - **Gemini**: Requires `GEMINI_API_KEY`.
-- **Ollama**: Optional: `OLLAMA_BASE_URL` (defaults to `http://localhost:11434/v1`).
-- **Gbox**: Local inference (macOS recommended).
+- **Ollama**: Local inference via OpenAI-compatible endpoint.
+
+## 📁 Project Structure
+
+- `src/index.ts`: Server entry point and tool registry.
+- `src/ai/`: Modular AI provider system.
+- `src/calibre/`: Core Calibre library and CLI drivers.
+- `src/tools/`: Implementation of MCP tools.
 
 ## 🛠 Installation
 

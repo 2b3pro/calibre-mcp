@@ -4,7 +4,7 @@ import { join } from "path";
 import { spawn } from "bun";
 import { homedir } from "node:os";
 import { unlink } from "node:fs/promises";
-import { AIFactory } from "../ai/Provider";
+import { AIFactory } from "../ai";
 
 export async function semanticRerank(
   query: string,
